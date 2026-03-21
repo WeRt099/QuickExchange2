@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "quickexchange",
-    "slug": "quickexchange",
+    "slug": "quickexchange-rhsijyfwipgktvcv3rmch",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -38,11 +38,24 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow QuickExchange to access your camera"
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "53644836-c4f0-4390-85b9-53b53a7a0107"
+      }
+    },
+    "owner": "wert099"
   }
 }
