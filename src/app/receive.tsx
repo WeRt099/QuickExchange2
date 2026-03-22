@@ -1,6 +1,7 @@
 import { Camera, CameraView } from "expo-camera";
 import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
+import { connect } from "../services/websocket";
 
 export default function Receive() {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
@@ -15,6 +16,20 @@ export default function Receive() {
 
     getPermission();
   }, []);
+
+  useEffect(() => {
+    if (!channelId) return;
+
+    const ws = connect(channelId);
+
+    ws.onmessage = (event) => {
+      console.log("RECEIVED:", event.data);
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, [channelId]);
 
   const handleScan = ({ data }: { data: string }) => {
     setScanned(true);
@@ -49,6 +64,7 @@ export default function Receive() {
         >
           <Text>Connected to channel:</Text>
           <Text style={{ fontSize: 20 }}>{channelId}</Text>
+          <Text style={{ marginTop: 20 }}>Waiting for data...</Text>
         </View>
       )}
     </View>

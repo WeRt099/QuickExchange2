@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button, Text, View } from "react-native";
 import QRCodeView from "../components/QRCodeView";
 import { useFile } from "../context/FileContext";
+import { connect, getSocket } from "../services/websocket";
 import { FileReceiver } from "../transfer/receiveFile";
 import { prepareFileChunks } from "../transfer/sendFile";
 import { generateChannelId } from "../utils/generateChannelId";
@@ -13,6 +14,10 @@ export default function Send() {
   useEffect(() => {
     const id = generateChannelId();
     setChannelId(id);
+
+    const ws = connect(id);
+
+    return () => ws.close();
   }, []);
 
   if (!file) {
@@ -66,6 +71,13 @@ export default function Send() {
           }}
         />
       </View>
+      <Button
+        title="Send test message"
+        onPress={() => {
+          const ws = getSocket();
+          ws?.send(JSON.stringify({ type: "test", message: "hello" }));
+        }}
+      />
     </View>
   );
 }
