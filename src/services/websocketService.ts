@@ -2,19 +2,34 @@ class WebSocketService {
   private socket: WebSocket | null = null;
 
   connect(url: string) {
-    this.socket = new WebSocket(url);
+    console.log("--- WS ATTEMPT ---");
+    console.log("URL:", url);
 
-    this.socket.onopen = () => {
-      console.log("WebSocket connected");
-    };
+    try {
+      this.socket = new WebSocket(url);
 
-    this.socket.onerror = (e) => {
-      console.log("WebSocket error", e);
-    };
+      this.socket.onopen = () => {
+        console.log("✅ [WS] Connected to:", url);
+      };
 
-    this.socket.onclose = () => {
-      console.log("WebSocket closed");
-    };
+      this.socket.onmessage = (event) => {
+        console.log("📩 [WS] Message received:", event.data);
+        // Тут можно добавить callback
+      };
+
+      this.socket.onerror = (e: any) => {
+        // В RN 'e' обычно пустой, но мы вытащим максимум
+        console.log("❌ [WS] ERROR EVENT:", JSON.stringify(e));
+        console.log("❌ [WS] Message:", e.message);
+      };
+
+      this.socket.onclose = (e) => {
+        console.log("🔌 [WS] Closed. Code:", e.code, "Reason:", e.reason);
+        // Код 1006 — самая частая проблема (обрыв без причины, обычно SSL)
+      };
+    } catch (err) {
+      console.log("🚫 [WS] Critical exception:", err);
+    }
   }
 
   send(data: any) {

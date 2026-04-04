@@ -1,14 +1,17 @@
 import React, { createContext, useContext, useState } from "react";
 
-type FileInfo = {
+export type FileType = {
+  id: string;
   uri: string;
   name: string;
   size: number;
-} | null;
+};
 
 type FileContextType = {
-  file: FileInfo;
-  setFile: (file: FileInfo) => void;
+  files: FileType[];
+  setFiles: (files: FileType[]) => void;
+  addFiles: (newFiles: FileType[]) => void;
+  clearFiles: () => void;
 
   progress: number;
   setProgress: (value: number) => void;
@@ -23,16 +26,27 @@ type FileContextType = {
 const FileContext = createContext<FileContextType | null>(null);
 
 export function FileProvider({ children }: { children: React.ReactNode }) {
-  const [file, setFile] = useState<FileInfo>(null);
+  const [files, setFiles] = useState<FileType[]>([]);
   const [progress, setProgress] = useState(0);
   const [channelId, setChannelId] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
 
+  const addFiles = (newFiles: FileType[]) => {
+    setFiles((prev) => [...prev, ...newFiles]);
+  };
+
+  const clearFiles = () => {
+    setFiles([]);
+    setProgress(0);
+  };
+
   return (
     <FileContext.Provider
       value={{
-        file,
-        setFile,
+        files,
+        setFiles,
+        addFiles,
+        clearFiles,
         progress,
         setProgress,
         channelId,

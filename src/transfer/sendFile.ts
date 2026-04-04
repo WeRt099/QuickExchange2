@@ -1,4 +1,4 @@
-import * as FileSystem from "expo-file-system/legacy";
+import * as FileSystem from "expo-file-system";
 import { splitIntoChunks } from "./chunkUtils";
 
 export async function prepareFileChunks(uri: string) {
