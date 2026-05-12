@@ -1,17 +1,12 @@
 import { router } from "expo-router";
 import { useEffect } from "react";
 import HelloCatScreen from "../app/first";
-
 export default function Index() {
   useEffect(() => {
     const init = async () => {
       try {
-        // 👇 проверка сервера (можешь пока закомментить)
         await checkServer();
-
-        // небольшая задержка (чтобы котик был виден)
         await new Promise((res) => setTimeout(res, 1500));
-
         router.replace("/main");
       } catch (e) {
         router.replace("/error");
@@ -20,11 +15,8 @@ export default function Index() {
 
     init();
   }, []);
-
   return <HelloCatScreen />;
 }
-
-// 👇 вынеси потом в utils
 const checkServer = () => {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(
@@ -48,7 +40,6 @@ const checkServer = () => {
         resolve(true);
       }
     };
-
     ws.onerror = () => {
       clearTimeout(timeout);
       reject("error");

@@ -33,22 +33,21 @@ export default function Send() {
   const { t } = useTranslation();
   const { files, clearFiles } = useFile();
 
-  // 🎛 Режимы экрана: 'camera' | 'qr'
   const [mode, setMode] = useState<"camera" | "qr">("camera");
 
-  // 📷 Камера
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
 
-  // 🔗 WebSocket & ID
   const [channelId, setChannelId] = useState("");
   const [isSending, setIsSending] = useState(false);
 
-  // 🔔 Уведомления и Анимации
   const [notificationMessage, setNotificationMessage] = useState("");
   const [showNotification, setShowNotification] = useState(false);
   const slideAnim = useRef(new Animated.Value(-100)).current;
   const spinValue = useRef(new Animated.Value(0)).current;
+
+  // 🔥 ДОБАВЛЕНО: Реф для хранения таймера
+  const tunnelTimer = useRef<any>(null);
 
   // --- ЛОГИРОВАНИЕ ФАЙЛОВ ---
   useEffect(() => {
@@ -65,7 +64,26 @@ export default function Send() {
       setChannelId(id);
       setupReceiverWebSocket(id);
     }
+
+    // 🔥 ДОБАВЛЕНО: Очистка таймера при смене режима (если ушли с QR)
+    if (mode === "camera") {
+      clearTunnelTimer();
+    }
   }, [mode]);
+
+  // 🔥 ДОБАВЛЕНО: Очистка таймера при размонтировании компонента
+  useEffect(() => {
+    return () => {
+      clearTunnelTimer();
+    };
+  }, []);
+
+  const clearTunnelTimer = () => {
+    if (tunnelTimer.current) {
+      clearTimeout(tunnelTimer.current);
+      tunnelTimer.current = null;
+    }
+  };
 
   // --- Запрос прав камеры ---
   useEffect(() => {
@@ -75,6 +93,7 @@ export default function Send() {
   }, [mode, permission]);
 
   // --- Анимация загрузки ---
+  // ... (без изменений) ...
   useEffect(() => {
     const spin = Animated.loop(
       Animated.timing(spinValue, {
@@ -98,6 +117,7 @@ export default function Send() {
   });
 
   // --- Уведомления ---
+  // ... (без изменений) ...
   const showNotificationWithMessage = useCallback(
     (message: string) => {
       if (!showNotification) {
@@ -130,9 +150,11 @@ export default function Send() {
       return;
     }
 
+    // 🔥 ДОБАВЛЕНО: Как только начинается отправка, таймер простоя больше не нужен
+    clearTunnelTimer();
+
     setIsSending(true);
 
-    // Используем уже открытый сокет (в режиме QR) ИЛИ создаем новый (в режиме Камеры)
     const ws = existingWs || connect(targetChannelId);
 
     const executeSend = async () => {
@@ -174,7 +196,6 @@ export default function Send() {
       }
     };
 
-    // Если сокет уже открыт (состояние 1), сразу отправляем
     if (ws.readyState === 1) {
       executeSend();
     } else {
@@ -191,16 +212,14 @@ export default function Send() {
   const handleBarCodeScanned = ({ data }: { data: string }) => {
     if (scanned || isSending) return;
 
-    // 1. Проверяем, что это вообще наш QR-код
     if (!data.startsWith("quickexchange://")) {
       console.log("❌ Проигнорирован чужой QR:", data);
       setScanned(true);
       showNotificationWithMessage(t("Invalid QR code format"));
-      setTimeout(() => setScanned(false), 2500); // Даем время убрать камеру от левого QR
+      setTimeout(() => setScanned(false), 2500);
       return;
     }
 
-    // 2. Проверяем, не пытаемся ли мы отправить файлы другому отправителю
     if (data.startsWith("quickexchange://send/")) {
       console.log("⚠️ Попытка Send -> Send заблокирована");
       setScanned(true);
@@ -212,7 +231,6 @@ export default function Send() {
     setScanned(true);
     console.log("📷 Валидный QR Сканирован:", data);
 
-    // Извлекаем ID (поддерживает как quickexchange://receive/ID так и старый формат)
     const scannedChannelId =
       data.split("/").pop() || data.replace("quickexchange://", "");
     startSendingProcess(scannedChannelId);
@@ -221,21 +239,32 @@ export default function Send() {
   // --- Логика ожидания (QR режим) ---
   const setupReceiverWebSocket = (id: string) => {
     const ws = connect(id);
-    ws.onopen = () => console.log("✅ Ждем получателя на канале:", id);
+
+    ws.onopen = () => {
+      console.log("✅ Ждем получателя на канале:", id);
+
+      // 🔥 ДОБАВЛЕНО: Устанавливаем таймер на 5 минут при успешном открытии соединения
+      tunnelTimer.current = setTimeout(
+        () => {
+          console.log("⏱️ Таймаут ожидания: закрываем соединение");
+          clearFiles();
+          ws.close();
+          router.replace("/main");
+        },
+        5 * 60 * 1000,
+      );
+    };
 
     ws.onmessage = (event) => {
       console.log("📨 [SEND] Получено сообщение:", event.data);
 
-      // 🔥 ИСПРАВЛЕНИЕ 4: Проверяем наличие слова READY внутри строки (так как теперь это JSON)
       if (typeof event.data === "string" && event.data.includes("READY")) {
         console.log("📩 Получен сигнал готовности от получателя!");
-        // Передаем тот самый сокет 'ws', чтобы не подключаться дважды!
         startSendingProcess(id, ws);
       }
     };
   };
 
-  // Формируем безопасную строку для QR отправителя
   const qrValueString = channelId ? `quickexchange://send/${channelId}` : "";
 
   return (
