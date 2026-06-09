@@ -19,13 +19,14 @@ import {
 import { lookup } from "react-native-mime-types";
 import QRCode from "react-native-qrcode-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
+// 🔥 ДОБАВИЛИ ИМПОРТ ДЛЯ ПОТОКОВОЙ ЗАПИСИ НА ДИСК
+import ReactNativeBlobUtil from "react-native-blob-util";
 
 import { connect, getSocket } from "../services/websocket";
 import { generateChannelId } from "../utils/generateChannelId";
 
 const SAF = FileSystem.StorageAccessFramework;
 
-// Удаляем SAF, теперь используем FileSystem.Directory и FileSystem.File
 const home = require("../assets/images/Home.png");
 const cameraIcon = require("../assets/images/Camera.png");
 const qrIcon = require("../assets/images/QR-code.png");
@@ -51,13 +52,15 @@ export default function Receive() {
   const [channelId, setChannelId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
+  // 🔥 ИЗМЕНИЛИ СТРУКТУРУ: вместо массива chunks теперь храним tempUri (путь к файлу на диске)
   const fileMap = useRef<{
     [fileId: string]: {
-      chunks: string[]; // или Uint8Array, но лучше string (base64)
+      tempUri: string;
       totalChunks: number;
-      fileName: string; // 🔥 ДОБАВИЛИ
+      fileName: string;
     };
   }>({});
+
   const tunnelTimer = useRef<any>(null);
 
   const [notificationMessage, setNotificationMessage] = useState("");
@@ -66,6 +69,9 @@ export default function Receive() {
   const spinValue = useRef(new Animated.Value(0)).current;
   const isProcessingMessage = useRef(false);
   const storageRef = useRef<string | null>(null);
+
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [fileQueue, setFileQueue] = useState({ current: 0, total: 0 });
 
   // --- ИНИЦИАЛИЗАЦИЯ ПАПКИ ---
   useEffect(() => {
@@ -94,7 +100,7 @@ export default function Receive() {
     if (mode === "qr" && !channelId) {
       const id = generateChannelId();
       setChannelId(id);
-      startReceivingProcess(id); // Сразу слушаем свой канал
+      startReceivingProcess(id);
     }
   }, [mode]);
 
@@ -113,12 +119,11 @@ export default function Receive() {
         return false;
       }
 
-      // Обращаемся напрямую к нашей константе
       const permissions = await SAF.requestDirectoryPermissionsAsync();
 
       if (permissions.granted) {
         setStoragePermission(permissions);
-        storageRef.current = permissions.directoryUri; // 🔥 ВАЖНО
+        storageRef.current = permissions.directoryUri;
         await AsyncStorage.setItem(DIRECTORY_URI_KEY, permissions.directoryUri);
         return true;
       }
@@ -180,7 +185,7 @@ export default function Receive() {
         setNotificationMessage(message);
         setShowNotification(true);
         Animated.timing(slideAnim, {
-          toValue: 0,
+          toValue: 60,
           duration: 200,
           useNativeDriver: true,
         }).start();
@@ -206,10 +211,9 @@ export default function Receive() {
     ws.onopen = () => {
       console.log("✅ [RECEIVER] Подключен к каналу:", targetChannelId);
 
-      // 🔥 ИСПРАВЛЕНИЕ 1: Даем серверу долю секунды, чтобы прописать нас в комнате
       setTimeout(() => {
         console.log("📤 [RECEIVER] Отправляем сигнал готовности");
-        ws.send(JSON.stringify({ type: "READY" })); // Отправляем в формате JSON!
+        ws.send(JSON.stringify({ type: "READY" }));
       }, 500);
 
       tunnelTimer.current = setTimeout(
@@ -226,7 +230,6 @@ export default function Receive() {
         const raw = event.data;
         if (typeof raw !== "string") return;
 
-        // 🔥 ИСПРАВЛЕНИЕ 2: Игнорируем технические сообщения, чтобы JSON.parse не крашился
         if (raw.includes("READY") || raw === "READY_TO_RECEIVE") {
           return;
         }
@@ -234,73 +237,113 @@ export default function Receive() {
         const data = JSON.parse(raw);
 
         // =========================
-        // 📦 START
+        // 📦 START (Подготовка временного файла)
         // =========================
         if (data.type === "START") {
           if (tunnelTimer.current) clearTimeout(tunnelTimer.current);
           setIsLoading(true);
 
+          setFileQueue({
+            current: data.fileIndex || 1,
+            total: data.totalFiles || 1,
+          });
+
+          setProgress({ current: 0, total: data.totalChunks });
+
+          // Генерируем уникальный путь во внутреннем скрытом кэше приложения
+          const tempPath = `${FileSystem.cacheDirectory}${data.fileId}_${data.fileName}`;
+
           fileMap.current[data.fileId] = {
-            chunks: [],
+            tempUri: tempPath,
             totalChunks: data.totalChunks,
             fileName: data.fileName,
           };
+
+          // Удаляем старый кэш этого файла, если он внезапно остался от прошлой сессии
+          try {
+            await FileSystem.deleteAsync(tempPath, { idempotent: true });
+          } catch {}
+
           console.log(
             `📥 START: ${data.fileName} (${data.totalChunks} чанков)`,
           );
         }
 
         // =========================
-        // 📦 CHUNK
+        // 📦 CHUNK (Потоковая запись на диск)
         // =========================
         if (data.type === "CHUNK") {
           const fileEntry = fileMap.current[data.fileId];
           if (!fileEntry) return;
 
-          fileEntry.chunks[data.index] = data.data;
-          console.log(
-            `📦 CHUNK received: ${data.fileId} [${data.index}/${fileEntry.totalChunks}]`,
+          // 🔥 ВАЖНО: react-native-blob-util требует путь без префикса "file://"
+          const cleanPath = fileEntry.tempUri.replace("file://", "");
+
+          // Нативно дописываем пришедший base64 чанк в конец файла на диске
+          await ReactNativeBlobUtil.fs.appendFile(
+            cleanPath,
+            data.data,
+            "base64",
           );
+
+          setProgress({
+            current: data.index + 1,
+            total: fileEntry.totalChunks,
+          });
+
+          console.log(
+            `📦 CHUNK written to disk: ${data.fileId} [${data.index + 1}/${fileEntry.totalChunks}]`,
+          );
+
+          // Отправляем подтверждение отправителю, чтобы он слал следующий кусок
+          ws.send(JSON.stringify({ type: "ACK", index: data.index }));
         }
 
         // =========================
-        // 📦 COMPLETE
+        // 📦 COMPLETE (Перенос готового файла в SAF)
         // =========================
         if (data.type === "COMPLETE") {
           console.log("📦 COMPLETE:", data.fileId);
           const fileEntry = fileMap.current[data.fileId];
           if (!fileEntry) return;
 
-          const isComplete = fileEntry.chunks.length === fileEntry.totalChunks;
-          if (!isComplete) return;
-
-          console.log(`💾 Сохраняем файл: ${fileEntry.fileName}`);
+          console.log(
+            `💾 Сохраняем собранный файл из кэша в SAF: ${fileEntry.fileName}`,
+          );
           const dir = storageRef.current;
           if (!dir) return;
 
-          const fullBase64 = fileEntry.chunks.join("");
           const sanitizedFileName = fileEntry.fileName.replace(
             /[\/:*?"<>|]/g,
             "_",
           );
           const mimeType = getMimeType(fileEntry.fileName);
 
+          // Создаем целевой пустой документ в выбранной юзером папке SAF
           const newFileUri = await SAF.createFileAsync(
             dir,
             sanitizedFileName,
             mimeType,
           );
-          await FileSystem.writeAsStringAsync(newFileUri, fullBase64, {
-            encoding: "base64" as any,
+
+          // 🔥 ТРЮК: Нативно и быстро копируем собранный файл из кэша в систему SAF
+          await FileSystem.copyAsync({
+            from: fileEntry.tempUri,
+            to: newFileUri,
           });
+
+          // Сразу очищаем за собой временный кэш на диске устройства
+          try {
+            await FileSystem.deleteAsync(fileEntry.tempUri, {
+              idempotent: true,
+            });
+          } catch {}
 
           delete fileMap.current[data.fileId];
 
           if (Object.keys(fileMap.current).length === 0) {
             setIsLoading(false);
-            showNotificationWithMessage(
-              t("All files downloaded successfully!"),
-            );
+            showNotificationWithMessage(t("All files downloaded successfully"));
             setTimeout(() => {
               router.replace("/main");
             }, 2000);
@@ -365,10 +408,27 @@ export default function Receive() {
       <Modal animationType="fade" transparent={true} visible={isLoading}>
         <View style={styles.modalBackground}>
           <View style={styles.modalContainer}>
-            <Text style={styles.modalText}>{t("Downloading in progress")}</Text>
-            <Text style={styles.fileNameText}>
+            {/* Заголовок с номером файла, если файлов несколько */}
+            <Text style={styles.modalText}>
+              {t("Downloading in progress")}
+              {"\n"}
+              {fileQueue.total > 1
+                ? `(${fileQueue.current}/${fileQueue.total})`
+                : ""}
+            </Text>
+
+            {/* Текстовый прогресс по текущему файлу */}
+            {progress.total > 0 && (
+              <Text style={styles.progressCounterText}>
+                {t("Downloaded")}: {progress.current} / {progress.total} (
+                {Math.round((progress.current / progress.total) * 100)}%)
+              </Text>
+            )}
+
+            <Text style={styles.hintText}>
               {t("Please wait until the file transfer is complete")}
             </Text>
+
             <Animated.Image
               source={loading}
               style={[
@@ -435,9 +495,7 @@ export default function Receive() {
               )}
             </View>
             <View style={styles.scanTextContainer}>
-              <Text style={styles.scanText}>
-                {t("Let the sender scan this QR")}
-              </Text>
+              <Text style={styles.scanText}>{t("Point the camera")}</Text>
             </View>
           </>
         )}
@@ -613,6 +671,7 @@ const styles = StyleSheet.create({
     marginBottom: height * 0.01,
     fontFamily: "Raleway",
     color: "#fff",
+    textAlign: "center",
   },
   fileNameText: {
     fontSize: width * 0.04,
@@ -622,4 +681,17 @@ const styles = StyleSheet.create({
     color: "#C0C0C0",
   },
   loadingImage: { width: width * 0.15, height: width * 0.15 },
+  progressCounterText: {
+    color: "#ffffff",
+    fontSize: width * 0.04,
+    marginVertical: height * 0.01,
+    textAlign: "center",
+    fontFamily: "Raleway",
+  },
+  hintText: {
+    color: "#ffffff",
+    fontSize: width * 0.04,
+    textAlign: "center",
+    marginVertical: height * 0.01,
+  },
 });

@@ -16,9 +16,9 @@ import {
 import QRCode from "react-native-qrcode-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import * as FileSystem from "expo-file-system"; // Убедись, что импортирован
 import { useFile } from "../context/FileContext";
 import { connect, getSocket } from "../services/websocket";
-import { prepareFileChunks } from "../transfer/sendFile";
 import { generateChannelId } from "../utils/generateChannelId";
 
 const home = require("../assets/images/Home.png");
@@ -124,7 +124,7 @@ export default function Send() {
         setNotificationMessage(message);
         setShowNotification(true);
         Animated.timing(slideAnim, {
-          toValue: 0,
+          toValue: 60,
           duration: 200,
           useNativeDriver: true,
         }).start();
@@ -141,6 +141,7 @@ export default function Send() {
   );
 
   // --- Отправка файлов по сети ---
+  // --- Отправка файлов по сети ---
   const startSendingProcess = async (
     targetChannelId: string,
     existingWs?: any,
@@ -150,39 +151,136 @@ export default function Send() {
       return;
     }
 
-    // 🔥 ДОБАВЛЕНО: Как только начинается отправка, таймер простоя больше не нужен
     clearTunnelTimer();
-
     setIsSending(true);
 
     const ws = existingWs || connect(targetChannelId);
+
+    // 🔥 Настройки скользящего окна
+    const WINDOW_SIZE = 4; // Сколько чанков можем отправить вперед без подтверждения
+    let lastAckedIndex = -1; // Индекс последнего успешно подтвержденного чанка
+    let resolveWindowSlot: (() => void) | null = null;
+
+    // Ловим подтверждения (ACK) от получателя
+    ws.onmessage = (event: any) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === "ACK") {
+          // Обновляем максимальный подтвержденный индекс
+          lastAckedIndex = Math.max(lastAckedIndex, message.index);
+
+          // Если цикл стоял на паузе и ждал свободного места в окне — пинаем его
+          if (resolveWindowSlot) {
+            resolveWindowSlot();
+          }
+        }
+      } catch (err) {
+        console.log("📨 [SEND] Ошибка парсинга сообщения:", event.data);
+      }
+    };
 
     const executeSend = async () => {
       console.log("✅ Готовы к отправке в канал:", targetChannelId);
       try {
         for (const file of files) {
+          // Сбрасываем индекс подтверждений для КАЖДОГО файла
+          lastAckedIndex = -1;
+
           console.log(`📤 Начинаем отправку файла: ${file.name}`);
           const fileId = `${file.name}-${Date.now()}`;
-          const result = await prepareFileChunks(file.uri);
+
+          // 1. Получаем инфу о файле (размер) без загрузки в память
+          const fileInfo = await FileSystem.getInfoAsync(file.uri);
+          if (!fileInfo.exists) {
+            console.log(`❌ Файл не найден: ${file.name}`);
+            continue;
+          }
+
+          const CHUNK_SIZE = 524286; // 512 КБ
+          const totalChunks = Math.ceil(fileInfo.size / CHUNK_SIZE);
+
+          const fileIndex = files.indexOf(file) + 1;
+          const totalFiles = files.length;
 
           ws.send(
             JSON.stringify({
               type: "START",
               fileId,
               fileName: file.name,
-              totalChunks: result.chunks.length,
+              totalChunks,
+              fileIndex,
+              totalFiles,
             }),
           );
 
-          result.chunks.forEach((chunk, index) => {
+          // 2. Пошагово читаем с диска и отправляем чанки
+          for (let index = 0; index < totalChunks; index++) {
+            if (ws.readyState !== 1) {
+              throw new Error("WebSocket connection lost during transfer");
+            }
+
+            // Ждем освобождения скользящего окна
+            while (index - lastAckedIndex > WINDOW_SIZE) {
+              await new Promise<void>((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                  reject(
+                    new Error(
+                      `Timeout waiting for window slide at chunk ${index}. Last ACK: ${lastAckedIndex}`,
+                    ),
+                  );
+                }, 15000);
+
+                resolveWindowSlot = () => {
+                  clearTimeout(timeout);
+                  resolve();
+                };
+              });
+            }
+
+            // Вычисляем позицию текущего куска
+            const position = index * CHUNK_SIZE;
+            const length = Math.min(CHUNK_SIZE, fileInfo.size - position);
+
+            // Читаем только ОДИН чанк прямо с диска
+            const chunkData = await FileSystem.readAsStringAsync(file.uri, {
+              encoding: FileSystem.EncodingType.Base64,
+              position: position,
+              length: length,
+            });
+
             ws.send(
-              JSON.stringify({ type: "CHUNK", fileId, index, data: chunk }),
+              JSON.stringify({
+                type: "CHUNK",
+                fileId,
+                index,
+                data: chunkData,
+              }),
             );
-          });
+
+            // Микропауза для разгрузки UI-потока
+            if (index % 2 === 0) {
+              await new Promise((r) => setTimeout(r, 1));
+            }
+          }
+
+          // Ждем финального ACK для текущего файла
+          while (lastAckedIndex < totalChunks - 1) {
+            await new Promise<void>((resolve, reject) => {
+              const timeout = setTimeout(
+                () => reject(new Error("Timeout waiting for final ACKs")),
+                10000,
+              );
+              resolveWindowSlot = () => {
+                clearTimeout(timeout);
+                resolve();
+              };
+            });
+          }
 
           ws.send(JSON.stringify({ type: "COMPLETE", fileId }));
         }
 
+        // Завершение всей очереди
         showNotificationWithMessage(t("Files sent successfully!"));
         setTimeout(() => {
           clearFiles();
@@ -207,7 +305,6 @@ export default function Send() {
       setIsSending(false);
     };
   };
-
   // --- Логика сканирования камеры ---
   const handleBarCodeScanned = ({ data }: { data: string }) => {
     if (scanned || isSending) return;
@@ -215,7 +312,7 @@ export default function Send() {
     if (!data.startsWith("quickexchange://")) {
       console.log("❌ Проигнорирован чужой QR:", data);
       setScanned(true);
-      showNotificationWithMessage(t("Invalid QR code format"));
+      showNotificationWithMessage(t("Invalid QR code URL"));
       setTimeout(() => setScanned(false), 2500);
       return;
     }
@@ -336,7 +433,7 @@ export default function Send() {
               )}
             </View>
             <View style={styles.scanTextContainer}>
-              <Text style={styles.scanText}>{t("Point the camera")}</Text>
+              <Text style={styles.scanText}>{t("Scan QR code")}</Text>
             </View>
           </>
         ) : (

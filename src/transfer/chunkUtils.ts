@@ -1,4 +1,4 @@
-export const CHUNK_SIZE = 4096 * 1024;
+export const CHUNK_SIZE = 256 * 1024;
 
 export function splitIntoChunks(base64: string): string[] {
   const chunks = [];

@@ -6,6 +6,7 @@
   "Main page": "Main page",
   "Send": "Send",
   "Receive": "Receive",
+  "Receive page": "Receive page",
   "Sending page": "Sending page",
   "Add files": "Add files",
   "Go exchange": "Go exchange",
@@ -32,5 +33,6 @@
   "Please wait until the file transfer is complete": "Please wait until the file transfer is complete",
   "All files downloaded successfully in": "All files downloaded successfully in",
   "Sending in progress": "Sending in progress",
-  "Invalid QR code URL": "Invalid QR code URL"
+  "Invalid QR code URL": "Invalid QR code URL",
+  "Downloaded": "Downloaded"
 }

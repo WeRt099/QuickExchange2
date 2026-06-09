@@ -8,6 +8,10 @@
     "scheme": "quickexchange",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "androidStatusBar": {
+      "backgroundColor": "#0D0C11",
+      "translucent": false
+    },
     "ios": {
       "supportsTablet": true
     },
@@ -16,8 +20,10 @@
         "foregroundImage": "./assets/images/Logo.png",
         "backgroundColor": "#0D0C11"
       },
+      "largeHeap": true,
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.wert099.quickexchangerhsijyfwipgktvcv3rmch"
     },
     "web": {
       "output": "static",
@@ -25,18 +31,6 @@
     },
     "plugins": [
       "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
-          "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
-          "dark": {
-            "backgroundColor": "#000000"
-          }
-        }
-      ],
       [
         "expo-camera",
         {
@@ -54,6 +48,11 @@
         "projectId": "53644836-c4f0-4390-85b9-53b53a7a0107"
       }
     },
-    "owner": "wert099"
+    "owner": "wert099",
+    "splash": {
+      "image": "./assets/images/Logo.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#0D0C11"
+    }
   }
 }

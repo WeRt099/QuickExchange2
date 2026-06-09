@@ -94,7 +94,7 @@ export default function SettingsPage() {
           <Text style={styles.rowLabel}>{t("Feedback")}</Text>
           <View style={styles.dynamicLine} />
           <TouchableOpacity
-            onPress={() => Linking.openURL("https://t.me/your_bot")}
+            onPress={() => Linking.openURL("https://t.me/wert099")}
           >
             <Text style={styles.linkText}>Telegram</Text>
           </TouchableOpacity>
@@ -105,7 +105,7 @@ export default function SettingsPage() {
           <Text style={styles.rowLabel}>{t("Developer")}</Text>
           <View style={styles.dynamicLine} />
           <TouchableOpacity
-            onPress={() => Linking.openURL("https://github.com/your_profile")}
+            onPress={() => Linking.openURL("https://github.com/wert099")}
           >
             <Text style={styles.linkText}>GitHub</Text>
           </TouchableOpacity>
